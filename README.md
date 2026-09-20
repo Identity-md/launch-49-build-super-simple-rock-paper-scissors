@@ -37,28 +37,54 @@ Prerequisites: Foundry (`forge` and optionally `cast`) and standard Solidity com
 forge build --offline
 forge test --offline
 forge fmt --check
-forge script script/Deploy.s.sol:Deploy --offline --chain 31337
+EXPECTED_CHAIN_ID=0 forge script script/Deploy.s.sol:Deploy --offline
 ```
 
-The last command executes the actual deployment script in Foundry's local EVM, with no RPC, private key, or broadcast. The returned address is only a simulated address. Tests cover all nine move pairs in both reveal orders, randomized valid reveals and invalid moves, both forfeit winners, no-reveal draws, exact deadline boundaries, invalid salts/encodings, unauthorized and repeated actions, immutable results, independent game records, event payloads, ETH rejection, and deployment chain checks.
+The last command executes the actual deployment script in Foundry's local EVM, with no RPC, private key, or broadcast. The returned address is only a simulated address. Tests cover all nine move pairs in both reveal orders, randomized valid reveals and invalid moves, both forfeit winners, no-reveal draws, exact deadline boundaries, invalid salts/encodings, unauthorized and repeated actions, immutable results, independent game records, event payloads, ETH rejection, and configurable deployment chain checks. Deployment integration tests verify the returned runtime bytecode, empty initial state, independent deployments, and a complete round through the returned contract. There is only one contract, so there are no token, owner, or other contract links to wire.
 
 Compiler settings: optimizer enabled with 200 runs, EVM target `paris` (supported on Sepolia). FFI and filesystem cheatcode permissions are disabled. Timestamp lint warnings are expected because the timeout deliberately compares block timestamps.
 
 ## Sepolia deployment — operator only
 
-Contributors only build, test, and simulate. They **never broadcast and never receive keys**. A separately authorized deployment operator maintains their own Sepolia-funded signing account, imports it into their own encrypted Foundry keystore as `sepolia-deployer`, and supplies their own trusted RPC endpoint. No wallet or endpoint is included in this project. Do not send private keys to contributors, put them in this repository, or put them in command-line arguments.
+Contributors only build, test, and simulate. They **never broadcast and never receive keys**. A separately authorized deployment operator maintains their own Sepolia-funded signing account, imports it into their own encrypted Foundry keystore under an account name of their choice, and supplies their own trusted RPC endpoint. No wallet or endpoint is included in this project. Do not send private keys to contributors, put them in this repository, or put them in command-line arguments.
 
-On the operator's machine, set `SEPOLIA_RPC_URL` to the Sepolia RPC endpoint and `DEPLOYER_ADDRESS` to the address for that keystore account. After reviewing the source and passing the offline checks, the **exact broadcast command** is:
+On the operator's machine, set `SEPOLIA_RPC_URL` to the Sepolia RPC endpoint, `DEPLOYER_ACCOUNT` to their keystore account name, and `DEPLOYER_ADDRESS` to that account's address. After reviewing the source and passing the offline checks, the **exact broadcast command** is:
 
 ```sh
+export EXPECTED_CHAIN_ID=11155111
 forge script script/Deploy.s.sol:Deploy \
   --rpc-url "$SEPOLIA_RPC_URL" \
-  --chain 11155111 \
-  --account sepolia-deployer \
+  --chain "$EXPECTED_CHAIN_ID" \
+  --account "$DEPLOYER_ACCOUNT" \
   --sender "$DEPLOYER_ADDRESS" \
   --broadcast
 ```
 
-The script uses `startBroadcast()` with the operator-selected signer, creates one `RockPaperScissors` with no constructor arguments, and calls `stopBroadcast()`. Its chain guard permits only local chain 31337 and Sepolia 11155111. The operator must check the RPC network, command, transaction preview, and account before signing. Run the same command without `--broadcast` for an RPC-backed simulation first. There is no ETH deployment value or post-deployment admin configuration; only gas is funded. The fixed reveal window cannot be changed after deployment.
+The script uses `startBroadcast()` with the operator-selected signer, creates one `RockPaperScissors` with no constructor arguments, and calls `stopBroadcast()`. Its optional chain guard reads `EXPECTED_CHAIN_ID` and rejects a mismatch before starting broadcast recording. With the default `0`, it uses whichever chain Forge executes on; there is no hardcoded network allowlist. The Sepolia command explicitly sets the guard and CLI chain to 11155111. The operator must check the RPC network, command, transaction preview, and account before signing. Run the same command without `--broadcast` for an RPC-backed simulation first. There is no ETH deployment value or post-deployment admin configuration; only gas is funded. The fixed reveal window cannot be changed after deployment.
 
-The operator is responsible for checking the receipt and chain, recording and publishing the actual deployed address/transaction, matching deployed bytecode to this build, and telling players the contract address and rules. No deployment has been broadcast by this assignment. An independent agent reviews the logic, commitments, deadline boundaries, tests, and script; its findings and limitations are recorded in `REVIEW.md`. This review and passing tests are not a formal security audit.
+The operator is responsible for checking the receipt and chain, recording and publishing the actual deployed address/transaction, matching deployed bytecode to this build, and telling players the contract address and rules. No deployment has been broadcast by this assignment. Explorer source verification, funding the operator account, and any UI or timeout keeper remain operator tasks; the script provides none of these. `REVIEW.md` records the earlier accepted revision, including its now-replaced fixed chain allowlist. The current revision's independent review is recorded below. Reviews and passing tests are not a formal security audit.
+
+## Deployment parameters and defaults
+
+No constructor arguments, deployment value, participant addresses, fees, tokens, owner, or external contract addresses are required. Player addresses, moves, and salts are supplied by players in later game calls, not by deployment. Test addresses and salts are local fixtures only.
+
+| Parameter | Local default | Operator use |
+| --- | --- | --- |
+| `EXPECTED_CHAIN_ID` (script environment) | `0`: no chain restriction | Set `11155111` for Sepolia; any nonzero value must match the execution chain. Invalid integer text fails parsing. |
+| Forge `--chain` | Foundry local simulation chain, normally `31337` | The broadcast command takes it from `EXPECTED_CHAIN_ID`. |
+| `SEPOLIA_RPC_URL` (CLI environment) | Unset; dry run uses no RPC | Required operator-provided Sepolia endpoint for `--rpc-url`. |
+| `DEPLOYER_ACCOUNT` (CLI environment) | Unset; dry run needs no keystore | Required operator-owned encrypted keystore account name for `--account`. |
+| `DEPLOYER_ADDRESS` (CLI environment) | Unset; dry run uses Forge's default simulated sender | Required signer address for `--sender` when broadcasting; must match the selected account. |
+| Deployment ETH value | `0` | No value option; the game has no payable constructor. Gas fees are estimated by Forge from the selected network. |
+| `REVEAL_WINDOW` | Fixed protocol constant: `86400` seconds | Existing no-argument contract exposes no configuration setter or deployment override. |
+
+The defaults require no configuration file or `.env`. The minimal command `forge script script/Deploy.s.sol:Deploy` also succeeds with `EXPECTED_CHAIN_ID` unset, without an RPC or broadcasting. The explicit dry-run command above overrides an inherited chain guard for reproducible local use. The standard Foundry cheatcode address in the script is tooling infrastructure, not a deployed dependency or network-specific address. Compiler settings and prerequisites are documented above and in the existing `foundry.toml`.
+
+Running the script again creates a fresh, independent game contract; it does not resume or upgrade an earlier deployment. There is no post-deployment initializer or admin handoff.
+
+
+## Independent review of this deployment revision
+
+On 2026-09-19, a separate review agent inspected the game logic, commitment verification, deadline boundaries, deployment script, integration tests, and documented commands. **No blocking correctness findings.** It independently ran `forge test --offline` (22 passing tests, including two fuzz tests with 256 runs each) and `env -u EXPECTED_CHAIN_ID forge script script/Deploy.s.sol:Deploy --offline` (successful local deployment without RPC or broadcast). The implementing agent also passed `forge build`, `forge test`, the minimal script command, and the documented explicit-default dry run.
+
+The review confirmed all nine outcomes, exact-deadline timeout behavior, both forfeit winners, and the chain guard running before deployment recording. The integration test runs environment changes sequentially because Foundry shares process environment variables across parallel tests; it verifies the returned contract's bytecode, empty state, playable round, chain configuration and fresh independent deployments. Accepted protocol limitations remain the documented commitment-copy front-running, lack of hash domain separation, and indefinite pending games before both commitments. No live deployment was performed, and this review is not a formal security audit.

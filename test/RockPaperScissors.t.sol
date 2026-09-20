@@ -2,7 +2,6 @@
 pragma solidity 0.8.30;
 
 import {RockPaperScissors as RPS} from "../src/RockPaperScissors.sol";
-import {Deploy} from "../script/Deploy.s.sol";
 
 interface TestVm {
     function prank(address) external;
@@ -11,7 +10,6 @@ interface TestVm {
     function expectRevert(bytes calldata) external;
     function expectEmit(bool, bool, bool, bool, address) external;
     function deal(address, uint256) external;
-    function chainId(uint256) external;
 }
 
 contract RockPaperScissorsTest {
@@ -348,22 +346,5 @@ contract RockPaperScissorsTest {
         require(!success && address(game).balance == 0, "accepted ether");
         (success,) = address(game).call{value: 1}(abi.encodeCall(game.createGame, (BOB)));
         require(!success && game.gameCount() == 1, "payable game");
-    }
-
-    function testDeploymentScriptLocalAndSepolia() public {
-        Deploy deploy = new Deploy();
-        vm.chainId(31337);
-        RPS local = deploy.run();
-        require(address(local).code.length > 0 && local.gameCount() == 0, "local deployment");
-        vm.chainId(11155111);
-        RPS sepolia = deploy.run();
-        require(address(sepolia).code.length > 0 && sepolia.REVEAL_WINDOW() == 1 days, "sepolia deployment");
-    }
-
-    function testDeploymentScriptRejectsOtherChains() public {
-        Deploy deploy = new Deploy();
-        vm.chainId(1);
-        vm.expectRevert(bytes("Use local simulation or Sepolia"));
-        deploy.run();
     }
 }
